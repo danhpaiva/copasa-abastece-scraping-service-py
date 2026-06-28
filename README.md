@@ -120,6 +120,7 @@ python scraper.py "https://www.copasa.com.br/wps/portal/..." --json
 | `url` | — | URL direta de uma notícia (opcional) |
 | `--json` | `false` | Emite resultado em JSON para stdout |
 | `--janela DIAS` | `14` | Janela de dias para filtrar notícias pelo título |
+| `--output ARQUIVO` | — | Grava o resultado em JSON no arquivo informado (ex: `alerts.json`) |
 | `--no-cache` | `false` | Ignora o cache e reprocessa todos os artigos |
 | `--timeout SEG` | `180` | Timeout global da sessão em segundos |
 | `--debug` | `false` | Habilita logs de nível DEBUG |
