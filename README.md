@@ -2,7 +2,7 @@
 
 ![Python](https://img.shields.io/badge/Python-3.10%2B-blue?logo=python&logoColor=white)
 ![Playwright](https://img.shields.io/badge/Playwright-1.49-green?logo=playwright&logoColor=white)
-![pytest](https://img.shields.io/badge/pytest-49%20testes-brightgreen?logo=pytest&logoColor=white)
+![pytest](https://img.shields.io/badge/pytest-64%20testes-brightgreen?logo=pytest&logoColor=white)
 ![License](https://img.shields.io/github/license/danhpaiva/copasa-abastece-scraping-service-py)
 ![Branch](https://img.shields.io/badge/branch-develop-orange)
 
@@ -21,7 +21,8 @@ Monitora o portal de notícias da [Copasa](https://www.copasa.com.br/wps/portal/
                 └─ Navega para cada candidato
                         └─ Cruza texto completo com lista de bairros
                                 └─ Deduplica por (início, fim, cidades)
-                                        └─ Exibe alerta ou JSON
+                                        └─ Remove encerrados com mais de 1 dia (D-1)
+                                                └─ Exibe alerta ou JSON
 ```
 
 O resumo de cada notícia já está disponível na listagem do portal IBM WCM, então a navegação individual só ocorre para artigos que passam nos dois filtros — reduzindo requisições e exposição ao WAF.
@@ -165,16 +166,43 @@ python scraper.py --no-cache
 
 ---
 
+## Política de retenção de alertas encerrados
+
+Alertas com status **ENCERRADO** (data de fim no passado) são exibidos apenas se encerraram no dia atual ou no dia anterior (D-1). Alertas mais antigos são descartados automaticamente.
+
+Alertas **ATIVOS** e alertas sem data de fim identificada passam sempre, independentemente da data.
+
+| Status      | Regra de retenção                        |
+| ----------- | ---------------------------------------- |
+| Ativo       | Sempre exibido                           |
+| Encerrado   | Exibido apenas se `data_fim >= hoje - 1` |
+| Sem data    | Sempre exibido (fail-open)               |
+
+> Esta lógica é aplicada exclusivamente no scraper. O modo `--url` (URL direta) não aplica o filtro, pois é voltado para diagnóstico manual.
+
+---
+
 ## Estrutura do projeto
 
 ```
 copasa-abastece-scraping-service-py/
-├── scraper.py          # script principal
-├── bairros.json        # configuração de bairros, aliases e cidades-alvo
-├── requirements.txt    # dependências Python
+├── scraper.py              # entry point (python scraper.py)
+├── scraper/
+│   ├── config.py           # constantes, paths, regexes, user agents
+│   ├── models.py           # dataclass Interrupcao
+│   ├── utils.py            # normalizar, carregar_bairros, parse_datetime, dentro_da_janela
+│   ├── cache.py            # cache de execução por hash SHA-1
+│   ├── timeout.py          # context manager de timeout global
+│   ├── browser.py          # Playwright: contexto, navegação, extração de links/texto
+│   ├── parser.py           # extração de datas, cidades, bairros, processar_noticia
+│   ├── output.py           # formatação e exibição de resultados
+│   ├── monitor.py          # orquestrador: monitorar, monitorar_url_direta
+│   └── cli.py              # argparse + entrypoint main()
+├── bairros.json            # configuração de bairros, aliases e cidades-alvo
+├── requirements.txt        # dependências Python
 ├── tests/
-│   └── test_scraper.py # testes unitários (42 casos, sem Playwright)
-└── .cache.json         # cache de execução (gerado em runtime, ignorado pelo git)
+│   └── test_scraper.py     # testes unitários (64 casos, sem Playwright)
+└── .cache.json             # cache de execução (gerado em runtime, ignorado pelo git)
 ```
 
 ---
@@ -198,6 +226,7 @@ Cobertura:
 | `cache`                    | hash determinístico, artigo sem alerta, artigo com alerta, roundtrip salvar/carregar, JSON corrompido                   |
 | `extrair_bairros_do_texto` | sem seção BAIRROS AFETADOS, múltiplas cidades, remoção de prefixo duplicado, deduplicação, title case, seção vazia      |
 | `processar_noticia`        | modo bairro com match, modo bairro sem match, modo cidade inteira com e sem bairros conhecidos, popula bairros_afetados |
+| `_filtrar_encerrados`      | ativo sempre passa, encerrado hoje passa, encerrado ontem passa, encerrado anteontem removido, sem data passa, mistura  |
 
 ## Aviso legal
 
