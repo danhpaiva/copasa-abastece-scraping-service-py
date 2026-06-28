@@ -15,10 +15,12 @@ Exit codes:
 """
 
 import argparse
+import hashlib
 import json
 import logging
 import random
 import re
+import signal
 import sys
 import unicodedata
 from dataclasses import dataclass, field
@@ -61,6 +63,11 @@ BASE_URL = (
 )
 
 BAIRROS_FILE = Path(__file__).parent / "bairros.json"
+CACHE_FILE   = Path(__file__).parent / ".cache.json"
+
+# Timeout global de sessão em segundos.
+# Protege execuções automáticas (cron) contra portais travados.
+TIMEOUT_GLOBAL_S = 180
 
 ARTICLE_SELECTORS = [
     "article",
@@ -189,6 +196,76 @@ def dentro_da_janela(titulo: str, janela_dias: int = 14) -> bool:
         return True
 
     return (hoje - data).days <= janela_dias
+
+
+# ---------------------------------------------------------------------------
+# Cache de execução
+# ---------------------------------------------------------------------------
+
+def _url_hash(url: str) -> str:
+    return hashlib.sha1(url.encode()).hexdigest()
+
+
+def cache_carregar() -> dict:
+    """Carrega o cache do disco; retorna dict vazio se não existir ou estiver corrompido."""
+    if CACHE_FILE.exists():
+        try:
+            return json.loads(CACHE_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return {}
+
+
+def cache_salvar(cache: dict) -> None:
+    CACHE_FILE.write_text(json.dumps(cache, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def cache_ja_processado(cache: dict, url: str) -> bool:
+    """Retorna True apenas para artigos sem alerta — alertas são sempre re-checados."""
+    entrada = cache.get(_url_hash(url))
+    if entrada is None:
+        return False
+    return not entrada.get("teve_alerta", False)
+
+
+def cache_registrar(cache: dict, url: str, resultado: Optional[dict]) -> None:
+    """Grava URL processada com timestamp e resultado resumido."""
+    cache[_url_hash(url)] = {
+        "url": url,
+        "processado_em": datetime.now().isoformat(),
+        "teve_alerta": resultado is not None,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Timeout global
+# ---------------------------------------------------------------------------
+
+class TimeoutError(Exception):
+    pass
+
+
+def _handler_timeout(signum, frame):
+    raise TimeoutError("Timeout global atingido.")
+
+
+class timeout_global:
+    """Context manager para timeout global. Usa SIGALRM no Unix; no Windows faz no-op."""
+
+    def __init__(self, segundos: int):
+        self.segundos = segundos
+        self._suportado = hasattr(signal, "SIGALRM")
+
+    def __enter__(self):
+        if self._suportado:
+            signal.signal(signal.SIGALRM, _handler_timeout)
+            signal.alarm(self.segundos)
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self._suportado:
+            signal.alarm(0)
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -395,7 +472,7 @@ def _deduplicar(interrupcoes: list[Interrupcao]) -> list[Interrupcao]:
     return list(unicos.values())
 
 
-def monitorar(modo_json: bool = False) -> int:
+def monitorar(modo_json: bool = False, janela_dias: int = 14, timeout_s: int = TIMEOUT_GLOBAL_S) -> int:
     """Retorna exit code: 1 se há alertas, 0 se não há, 2 se erro."""
     try:
         bairros, aliases, cidades_alvo = carregar_bairros()
@@ -405,60 +482,82 @@ def monitorar(modo_json: bool = False) -> int:
 
     log.info("Bairros monitorados : %s", ", ".join(bairros))
     log.info("Cidades-alvo        : %s", ", ".join(cidades_alvo) or "(todas)")
+    log.info("Janela de datas     : %d dias", janela_dias)
+    log.info("Timeout global      : %ds", timeout_s)
     log.info("Acessando           : %s", BASE_URL)
 
     cidades_norm = [normalizar(c) for c in cidades_alvo]
     interrupcoes: list[Interrupcao] = []
+    cache = cache_carregar()
+    cache_hits = 0
 
     try:
-        with sync_playwright() as playwright:
-            browser, context = criar_contexto(playwright)
-            try:
-                page = context.new_page()
+        with timeout_global(timeout_s):
+            with sync_playwright() as playwright:
+                browser, context = criar_contexto(playwright)
+                try:
+                    page = context.new_page()
 
-                if not navegar_com_retry(page, BASE_URL):
-                    log.error("Não foi possível acessar o portal da Copasa.")
-                    return 2
+                    if not navegar_com_retry(page, BASE_URL):
+                        log.error("Não foi possível acessar o portal da Copasa.")
+                        return 2
 
-                noticias = extrair_links_noticias(page)
-                log.info("%d notícia(s) encontrada(s) na listagem.", len(noticias))
+                    noticias = extrair_links_noticias(page)
+                    log.info("%d notícia(s) encontrada(s) na listagem.", len(noticias))
 
-                candidatos = []
-                ignorados_data = 0
-                for item in noticias:
-                    if not dentro_da_janela(item["titulo"]):
-                        ignorados_data += 1
-                        continue
-                    texto_norm = normalizar(item["texto"])
-                    if not cidades_norm or any(c in texto_norm for c in cidades_norm):
-                        candidatos.append(item)
-
-                if ignorados_data:
-                    log.info("%d notícia(s) fora da janela de 14 dias ignorada(s).", ignorados_data)
-                log.info("%d artigo(s) com cidade-alvo para inspeção detalhada.", len(candidatos))
-
-                for i, item in enumerate(candidatos, 1):
-                    log.info("[%d/%d] %s...", i, len(candidatos), item["titulo"][:65])
-                    try:
-                        if not navegar_com_retry(page, item["url"]):
+                    candidatos = []
+                    ignorados_data = 0
+                    for item in noticias:
+                        if not dentro_da_janela(item["titulo"], janela_dias):
+                            ignorados_data += 1
                             continue
-                        texto_completo = extrair_texto_noticia(page)
-                        resultado = processar_noticia(
-                            url=item["url"], titulo=item["titulo"],
-                            texto=texto_completo, bairros=bairros, aliases=aliases,
-                        )
-                        if resultado:
-                            interrupcoes.append(resultado)
-                            log.info("  MATCH → bairros: %s", resultado.bairros_afetados)
-                        else:
-                            log.debug("  SKIP — nenhum bairro monitorado encontrado.")
-                    except Exception as exc:
-                        log.warning("Erro ao processar artigo: %s", exc)
+                        texto_norm = normalizar(item["texto"])
+                        if not cidades_norm or any(c in texto_norm for c in cidades_norm):
+                            candidatos.append(item)
 
-            finally:
-                context.close()
-                browser.close()
+                    if ignorados_data:
+                        log.info("%d notícia(s) fora da janela de %d dias ignorada(s).", ignorados_data, janela_dias)
+                    log.info("%d artigo(s) com cidade-alvo para inspeção detalhada.", len(candidatos))
 
+                    for i, item in enumerate(candidatos, 1):
+                        if cache_ja_processado(cache, item["url"]):
+                            cache_hits += 1
+                            log.debug("[%d/%d] CACHE HIT — %s", i, len(candidatos), item["titulo"][:60])
+                            continue
+
+                        log.info("[%d/%d] %s...", i, len(candidatos), item["titulo"][:65])
+                        resultado = None
+                        try:
+                            if not navegar_com_retry(page, item["url"]):
+                                continue
+                            texto_completo = extrair_texto_noticia(page)
+                            resultado = processar_noticia(
+                                url=item["url"], titulo=item["titulo"],
+                                texto=texto_completo, bairros=bairros, aliases=aliases,
+                            )
+                            if resultado:
+                                interrupcoes.append(resultado)
+                                log.info("  MATCH → bairros: %s", resultado.bairros_afetados)
+                            else:
+                                log.debug("  SKIP — nenhum bairro monitorado encontrado.")
+                        except Exception as exc:
+                            log.warning("Erro ao processar artigo: %s", exc)
+                            continue
+
+                        cache_registrar(cache, item["url"], resultado.to_dict() if resultado else None)
+
+                    cache_salvar(cache)
+                    if cache_hits:
+                        log.info("%d artigo(s) ignorado(s) por cache.", cache_hits)
+
+                finally:
+                    context.close()
+                    browser.close()
+
+    except TimeoutError:
+        log.error("Timeout global de %ds atingido. Encerrando.", timeout_s)
+        cache_salvar(cache)
+        return 2
     except Exception as exc:
         log.error("Erro inesperado: %s", exc)
         return 2
@@ -537,6 +636,10 @@ def _build_parser() -> argparse.ArgumentParser:
                         help="Emite resultado em JSON para stdout (logs vão para stderr)")
     parser.add_argument("--janela", type=int, default=14, metavar="DIAS",
                         help="Janela de dias para filtrar notícias pelo título (padrão: 14)")
+    parser.add_argument("--no-cache", dest="no_cache", action="store_true",
+                        help="Ignora o cache e reprocessa todos os artigos")
+    parser.add_argument("--timeout", type=int, default=TIMEOUT_GLOBAL_S, metavar="SEG",
+                        help=f"Timeout global da sessão em segundos (padrão: {TIMEOUT_GLOBAL_S})")
     parser.add_argument("--debug", action="store_true",
                         help="Habilita logs de nível DEBUG")
     return parser
@@ -548,9 +651,13 @@ if __name__ == "__main__":
     if args.debug:
         logging.getLogger().setLevel(logging.DEBUG)
 
+    if args.no_cache and CACHE_FILE.exists():
+        CACHE_FILE.unlink()
+        log.info("Cache limpo.")
+
     if args.url:
         code = monitorar_url_direta(args.url, modo_json=args.json_output)
     else:
-        code = monitorar(modo_json=args.json_output)
+        code = monitorar(modo_json=args.json_output, janela_dias=args.janela, timeout_s=args.timeout)
 
     sys.exit(code)
