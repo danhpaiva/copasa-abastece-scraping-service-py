@@ -61,11 +61,11 @@ Edite o arquivo `bairros.json` para definir o que monitorar:
 }
 ```
 
-| Campo | Descrição |
-|---|---|
-| `bairros` | Lista de bairros a monitorar (sem acento — normalização é automática). **Lista vazia** ativa o modo cidade inteira: qualquer alerta das cidades configuradas é aceito, sem filtro por bairro |
-| `aliases` | Variações com acento ou grafia alternativa mapeadas ao nome canônico |
-| `cidades_alvo` | Pré-filtro por cidade na listagem — reduz navegações desnecessárias |
+| Campo          | Descrição                                                                                                                                                                                    |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `bairros`      | Lista de bairros a monitorar (sem acento — normalização é automática). **Lista vazia** ativa o modo cidade inteira: qualquer alerta das cidades configuradas é aceito, sem filtro por bairro |
+| `aliases`      | Variações com acento ou grafia alternativa mapeadas ao nome canônico                                                                                                                         |
+| `cidades_alvo` | Pré-filtro por cidade na listagem — reduz navegações desnecessárias                                                                                                                          |
 
 > **Modo cidade inteira:** configure `"bairros": []` para receber todos os alertas de uma cidade, sem destacar bairros específicos. Útil para monitorar municípios menores onde a Copasa não detalha bairros no texto.
 
@@ -121,25 +121,25 @@ python scraper.py "https://www.copasa.com.br/wps/portal/..." --json
 
 ## Argumentos CLI
 
-| Argumento | Padrão | Descrição |
-|---|---|---|
-| `url` | — | URL direta de uma notícia (opcional) |
-| `--json` | `false` | Emite resultado em JSON para stdout |
-| `--janela DIAS` | `14` | Janela de dias para filtrar notícias pelo título |
-| `--output ARQUIVO` | — | Grava o resultado em JSON no arquivo informado (ex: `alerts.json`) |
-| `--no-cache` | `false` | Ignora o cache e reprocessa todos os artigos |
-| `--timeout SEG` | `180` | Timeout global da sessão em segundos |
-| `--debug` | `false` | Habilita logs de nível DEBUG |
+| Argumento          | Padrão  | Descrição                                                          |
+| ------------------ | ------- | ------------------------------------------------------------------ |
+| `url`              | —       | URL direta de uma notícia (opcional)                               |
+| `--json`           | `false` | Emite resultado em JSON para stdout                                |
+| `--janela DIAS`    | `14`    | Janela de dias para filtrar notícias pelo título                   |
+| `--output ARQUIVO` | —       | Grava o resultado em JSON no arquivo informado (ex: `alerts.json`) |
+| `--no-cache`       | `false` | Ignora o cache e reprocessa todos os artigos                       |
+| `--timeout SEG`    | `180`   | Timeout global da sessão em segundos                               |
+| `--debug`          | `false` | Habilita logs de nível DEBUG                                       |
 
 ---
 
 ## Exit codes
 
-| Código | Significado |
-|---|---|
-| `0` | Nenhuma interrupção encontrada nos bairros monitorados |
-| `1` | Uma ou mais interrupções encontradas |
-| `2` | Erro de execução (rede, parsing, timeout) |
+| Código | Significado                                            |
+| ------ | ------------------------------------------------------ |
+| `0`    | Nenhuma interrupção encontrada nos bairros monitorados |
+| `1`    | Uma ou mais interrupções encontradas                   |
+| `2`    | Erro de execução (rede, parsing, timeout)              |
 
 Útil para uso em scripts shell, `cron` e GitHub Actions:
 
@@ -189,12 +189,18 @@ pytest tests/ -v
 
 Cobertura:
 
-| Função | Cenários testados |
-|---|---|
-| `extrair_datas` | formato completo, hora sem segundos, texto sem data, data inválida, variações de "até/ate" |
-| `extrair_cidades` | múltiplas cidades, cidade única, variação "Municípios de", conjunção "e" isolada |
-| `cruzar_bairros` | match exato, alias com acento, case-insensitive, sem duplicatas, correspondência parcial |
-| `dentro_da_janela` | hoje, limite exato, além do limite, janela customizada, fail-open, virada de ano |
-| `cache` | hash determinístico, artigo sem alerta, artigo com alerta, roundtrip salvar/carregar, JSON corrompido |
-| `extrair_bairros_do_texto` | sem seção BAIRROS AFETADOS, múltiplas cidades, remoção de prefixo duplicado, deduplicação, title case, seção vazia |
-| `processar_noticia` | modo bairro com match, modo bairro sem match, modo cidade inteira com e sem bairros conhecidos, popula bairros_afetados |
+| Função                     | Cenários testados                                                                                                       |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `extrair_datas`            | formato completo, hora sem segundos, texto sem data, data inválida, variações de "até/ate"                              |
+| `extrair_cidades`          | múltiplas cidades, cidade única, variação "Municípios de", conjunção "e" isolada                                        |
+| `cruzar_bairros`           | match exato, alias com acento, case-insensitive, sem duplicatas, correspondência parcial                                |
+| `dentro_da_janela`         | hoje, limite exato, além do limite, janela customizada, fail-open, virada de ano                                        |
+| `cache`                    | hash determinístico, artigo sem alerta, artigo com alerta, roundtrip salvar/carregar, JSON corrompido                   |
+| `extrair_bairros_do_texto` | sem seção BAIRROS AFETADOS, múltiplas cidades, remoção de prefixo duplicado, deduplicação, title case, seção vazia      |
+| `processar_noticia`        | modo bairro com match, modo bairro sem match, modo cidade inteira com e sem bairros conhecidos, popula bairros_afetados |
+
+## Aviso legal
+
+> ⚠ **Este não é um serviço oficial da Copasa.**
+>
+> Este projeto é independente, sem fins lucrativos e sem vínculo com a [Copasa](https://www.copasa.com.br). Os dados são obtidos automaticamente do site oficial da Copasa e podem apresentar atraso de até 1 hora ou inconsistências. Não nos responsabilizamos por decisões tomadas com base nas informações exibidas. Consulte sempre os canais oficiais da Copasa para informações definitivas.
