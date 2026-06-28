@@ -71,6 +71,9 @@ DATE_PATTERN = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 
+# Extrai DD/MM do título da notícia (ex.: "28/06 - BELO HORIZONTE...")
+TITLE_DATE_PATTERN = re.compile(r"^(\d{2}/\d{2})")
+
 # Captura todas as cidades da lista separada por vírgulas/espaços após "Cidades de" ou "Municípios de".
 # O lookahead termina em "o abastecimento" ou ponto/fim-de-linha — não em vírgula,
 # pois a própria lista usa vírgulas como separador.
@@ -133,6 +136,31 @@ def parse_datetime(data_str: str, hora_str: str) -> Optional[datetime]:
         return datetime.strptime(f"{data_str} {hora_str}", "%d/%m/%Y %H:%M:%S")
     except ValueError:
         return None
+
+
+def dentro_da_janela(titulo: str, janela_dias: int = 14) -> bool:
+    """
+    Retorna True se a data extraída do título estiver dentro dos últimos `janela_dias`.
+
+    O título segue o padrão "DD/MM - CIDADE...", sem ano. O ano é inferido:
+    como o portal só exibe notícias recentes, assume-se o ano corrente; se a
+    data resultante estiver no futuro (ex.: publicação em janeiro, referência
+    a dezembro do ano anterior), recua um ano.
+    """
+    match = TITLE_DATE_PATTERN.match(titulo.strip())
+    if not match:
+        return True  # Sem data no título → não descarta (fail-open)
+
+    hoje = datetime.now().date()
+    try:
+        data = datetime.strptime(f"{match.group(1)}/{hoje.year}", "%d/%m/%Y").date()
+        # Se a data inferida estiver mais de 30 dias no futuro, é do ano anterior
+        if (data - hoje).days > 30:
+            data = data.replace(year=hoje.year - 1)
+    except ValueError:
+        return True
+
+    return (hoje - data).days <= janela_dias
 
 
 # ---------------------------------------------------------------------------
@@ -395,16 +423,21 @@ def monitorar() -> None:
             noticias = extrair_links_noticias(page)
             print(f"[INFO] {len(noticias)} notícia(s) encontrada(s) na listagem.")
 
-            # 2. Primeiro passo: filtra pelo resumo da listagem por cidade-alvo.
-            #    O resumo não contém bairros — apenas se a cidade está no texto.
-            #    Artigos sem cidade-alvo são descartados sem custo de navegação.
+            # 2. Primeiro passo: filtra na listagem por janela de datas e cidade-alvo.
+            #    Nenhuma navegação extra — usa título e resumo já disponíveis.
             candidatos = []
+            ignorados_data = 0
             for item in noticias:
+                if not dentro_da_janela(item["titulo"]):
+                    ignorados_data += 1
+                    continue
                 texto_norm = normalizar(item["texto"])
                 cidade_ok = not cidades_norm or any(c in texto_norm for c in cidades_norm)
                 if cidade_ok:
                     candidatos.append(item)
 
+            if ignorados_data:
+                print(f"[INFO] {ignorados_data} notícia(s) fora da janela de 14 dias ignorada(s).")
             total = len(candidatos)
             print(f"[INFO] {total} artigo(s) com cidade-alvo para inspeção detalhada.")
             print()
