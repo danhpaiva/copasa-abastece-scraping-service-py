@@ -436,13 +436,17 @@ def exibir_alerta_texto(interrupcao: Interrupcao) -> None:
     print()
 
 
-def exibir_resultado(interrupcoes: list[Interrupcao], modo_json: bool) -> None:
+def exibir_resultado(interrupcoes: list[Interrupcao], modo_json: bool, output: Optional[Path] = None) -> None:
+    payload = [i.to_dict() for i in interrupcoes]
+
+    if output:
+        # Grava sempre como JSON, independente de --json estar ativo
+        conteudo = json.dumps(payload, ensure_ascii=False, indent=2)
+        output.write_text(conteudo, encoding="utf-8")
+        log.info("Resultado salvo em %s (%d alerta(s)).", output, len(payload))
+
     if modo_json:
-        print(json.dumps(
-            [i.to_dict() for i in interrupcoes],
-            ensure_ascii=False,
-            indent=2,
-        ))
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
         return
 
     if not interrupcoes:
@@ -472,7 +476,7 @@ def _deduplicar(interrupcoes: list[Interrupcao]) -> list[Interrupcao]:
     return list(unicos.values())
 
 
-def monitorar(modo_json: bool = False, janela_dias: int = 14, timeout_s: int = TIMEOUT_GLOBAL_S) -> int:
+def monitorar(modo_json: bool = False, janela_dias: int = 14, timeout_s: int = TIMEOUT_GLOBAL_S, output: Optional[Path] = None) -> int:
     """Retorna exit code: 1 se há alertas, 0 se não há, 2 se erro."""
     try:
         bairros, aliases, cidades_alvo = carregar_bairros()
@@ -563,11 +567,11 @@ def monitorar(modo_json: bool = False, janela_dias: int = 14, timeout_s: int = T
         return 2
 
     alertas = _deduplicar(interrupcoes)
-    exibir_resultado(alertas, modo_json)
+    exibir_resultado(alertas, modo_json, output)
     return 1 if alertas else 0
 
 
-def monitorar_url_direta(url: str, modo_json: bool = False) -> int:
+def monitorar_url_direta(url: str, modo_json: bool = False, output: Optional[Path] = None) -> int:
     """Retorna exit code: 1 se há alerta, 0 se não há, 2 se erro."""
     try:
         bairros, aliases, _ = carregar_bairros()
@@ -595,7 +599,7 @@ def monitorar_url_direta(url: str, modo_json: bool = False) -> int:
                 )
 
                 if resultado:
-                    exibir_resultado([resultado], modo_json)
+                    exibir_resultado([resultado], modo_json, output)
                     return 1
                 else:
                     log.info("Nenhum bairro monitorado encontrado nesta notícia.")
@@ -603,8 +607,7 @@ def monitorar_url_direta(url: str, modo_json: bool = False) -> int:
                     cidades = extrair_cidades(texto)
                     log.info("Cidades mencionadas : %s", ", ".join(cidades) or "nenhuma")
                     log.info("Período identificado: %s → %s", formatar_datetime(inicio), formatar_datetime(fim))
-                    if modo_json:
-                        print("[]")
+                    exibir_resultado([], modo_json, output)
                     return 0
 
             finally:
@@ -640,6 +643,8 @@ def _build_parser() -> argparse.ArgumentParser:
                         help="Ignora o cache e reprocessa todos os artigos")
     parser.add_argument("--timeout", type=int, default=TIMEOUT_GLOBAL_S, metavar="SEG",
                         help=f"Timeout global da sessão em segundos (padrão: {TIMEOUT_GLOBAL_S})")
+    parser.add_argument("--output", type=Path, default=None, metavar="ARQUIVO",
+                        help="Grava o resultado em JSON no arquivo informado (ex: alerts.json)")
     parser.add_argument("--debug", action="store_true",
                         help="Habilita logs de nível DEBUG")
     return parser
@@ -656,8 +661,8 @@ if __name__ == "__main__":
         log.info("Cache limpo.")
 
     if args.url:
-        code = monitorar_url_direta(args.url, modo_json=args.json_output)
+        code = monitorar_url_direta(args.url, modo_json=args.json_output, output=args.output)
     else:
-        code = monitorar(modo_json=args.json_output, janela_dias=args.janela, timeout_s=args.timeout)
+        code = monitorar(modo_json=args.json_output, janela_dias=args.janela, timeout_s=args.timeout, output=args.output)
 
     sys.exit(code)
