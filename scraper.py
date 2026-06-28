@@ -409,12 +409,17 @@ def extrair_bairros_do_texto(texto: str) -> list[str]:
     """
     Extrai todos os bairros listados na seção "BAIRROS AFETADOS" do artigo.
 
-    O portal Copasa estrutura a seção assim:
+    Suporta dois formatos do portal Copasa:
+
+    Formato 1 — prefixo por cidade (formato original):
         BAIRROS AFETADOS
         Belo Horizonte: Aarão Reis, Acaiaca, Aeroporto, ...
         Contagem: Cidade Industrial, Industrial 1ª e 2ª Seção, ...
 
-    Captura apenas as linhas após o cabeçalho, até o fim da seção.
+    Formato 2 — parágrafo plano sem prefixo de cidade:
+        BAIRROS AFETADOS
+        Aarão Reis, Acaiaca, Nazaré, Vila Cemig e Vila Esperança
+
     Retorna lista plana de nomes com Title Case, sem duplicatas.
     """
     if not BAIRROS_AFETADOS_HEADER.search(texto):
@@ -427,24 +432,63 @@ def extrair_bairros_do_texto(texto: str) -> list[str]:
     bairros: list[str] = []
     vistos: set[str] = set()
 
-    for match in BAIRROS_CIDADE_PATTERN.finditer(trecho):
-        # group(1) = nome da cidade, group(2) = lista de bairros separados por vírgula
-        lista_raw = match.group(2)
-        for b in lista_raw.split(","):
-            nome = b.strip().strip(".")
-            if not nome:
-                continue
-            # O portal duplica o nome da cidade no início da lista:
-            # "Belo Horizonte: Belo Horizonte: Aarão Reis, ..."
-            # Remove tudo até o último ":" do token, se houver
-            if ":" in nome:
-                nome = nome.split(":")[-1].strip().strip(".")
-            if not nome:
-                continue
-            nome_title = nome.title()
-            if nome_title not in vistos:
-                vistos.add(nome_title)
-                bairros.append(nome_title)
+    # --- Formato 1: linhas "NomeCidade: bairro1, bairro2, ..." ---
+    matches = list(BAIRROS_CIDADE_PATTERN.finditer(trecho))
+    if matches:
+        for match in matches:
+            # group(1) = nome da cidade, group(2) = lista de bairros separados por vírgula
+            lista_raw = match.group(2)
+            for b in lista_raw.split(","):
+                nome = b.strip().strip(".")
+                if not nome:
+                    continue
+                # O portal duplica o nome da cidade no início da lista:
+                # "Belo Horizonte: Belo Horizonte: Aarão Reis, ..."
+                # Remove tudo até o último ":" do token, se houver
+                if ":" in nome:
+                    nome = nome.split(":")[-1].strip().strip(".")
+                if not nome:
+                    continue
+                nome_title = nome.title()
+                if nome_title not in vistos:
+                    vistos.add(nome_title)
+                    bairros.append(nome_title)
+
+    else:
+        # --- Formato 2: lista plana sem prefixo de cidade ---
+        # Toma a primeira linha não-vazia após o cabeçalho
+        linhas = trecho.splitlines()
+        linha_bairros = ""
+        # Pula a linha do cabeçalho (primeira linha contém "BAIRROS AFETADOS")
+        for linha in linhas[1:]:
+            if linha.strip():
+                linha_bairros = linha.strip()
+                break
+
+        if linha_bairros:
+            fragmentos = linha_bairros.split(",")
+            bairros_raw: list[str] = []
+            for i, frag in enumerate(fragmentos):
+                # Aplica split por " e " somente no último fragmento
+                if i == len(fragmentos) - 1 and " e " in frag:
+                    bairros_raw.extend(frag.split(" e "))
+                else:
+                    bairros_raw.append(frag)
+
+            for nome in bairros_raw:
+                nome = nome.strip()
+                if not nome:
+                    continue
+                nome_title = nome.title()
+                if nome_title not in vistos:
+                    vistos.add(nome_title)
+                    bairros.append(nome_title)
+
+    if not bairros:
+        log.warning(
+            "BAIRROS AFETADOS: cabeçalho encontrado mas nenhum bairro extraído"
+            " — possível novo formato."
+        )
 
     return bairros
 

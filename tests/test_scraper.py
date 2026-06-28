@@ -6,10 +6,13 @@ Execução:
     pytest tests/ -v
 """
 
+import logging
 from datetime import datetime, date, timedelta
 from unittest.mock import patch
 
 import pytest
+from hypothesis import given, settings, assume
+from hypothesis import strategies as st
 
 from scraper import (
     extrair_datas,
@@ -433,3 +436,198 @@ class TestExtrairBairrosDoTexto:
         assert resultado is not None
         assert "Aarão Reis" in resultado.bairros_afetados
         assert "Cidade Industrial" in resultado.bairros_afetados
+
+    # --- Testes de exemplo para Formato 2 ---
+
+    def test_formato2_lista_plana_simples(self):
+        """Formato 2: lista plana com bairros separados por vírgula."""
+        texto = (
+            "BAIRROS AFETADOS\n"
+            "Aarão Reis, Acaiaca, Nazaré\n"
+        )
+        resultado = extrair_bairros_do_texto(texto)
+        assert "Aarão Reis" in resultado
+        assert "Acaiaca" in resultado
+        assert "Nazaré" in resultado
+        assert len(resultado) == 3
+
+    def test_formato2_e_como_separador(self):
+        """Formato 2: último item usa ' e ' como separador — deve retornar dois bairros."""
+        texto = (
+            "BAIRROS AFETADOS\n"
+            "Riacho Das Pedras, Vila Cemig e Vila Esperança\n"
+        )
+        resultado = extrair_bairros_do_texto(texto)
+        assert "Vila Cemig" in resultado
+        assert "Vila Esperança" in resultado
+        assert "Riacho Das Pedras" in resultado
+
+    def test_formato2_unico_bairro(self):
+        """Formato 2: apenas um bairro na lista plana."""
+        texto = (
+            "BAIRROS AFETADOS\n"
+            "Centro\n"
+        )
+        resultado = extrair_bairros_do_texto(texto)
+        assert resultado == ["Centro"]
+
+    def test_warning_emitido_quando_sem_bairros(self, caplog):
+        """Cabeçalho presente mas sem bairros → WARNING deve ser emitido."""
+        texto = "BAIRROS AFETADOS\n"
+        with caplog.at_level(logging.WARNING, logger="scraper"):
+            resultado = extrair_bairros_do_texto(texto)
+        assert resultado == []
+        assert any("cabeçalho encontrado" in msg.lower() or "bairros afetados" in msg.lower()
+                   for msg in caplog.messages)
+
+
+# ===========================================================================
+# Property-based tests (Hypothesis) — extrair_bairros_do_texto
+# ===========================================================================
+
+# Strategy for generating valid bairro names: printable text, no commas, no
+# leading/trailing whitespace, non-empty, and not containing " e " to avoid
+# ambiguous splitting.
+_bairro_name = st.text(
+    alphabet=st.characters(
+        whitelist_categories=("Lu", "Ll", "Lt", "Lm", "Lo", "Nd", "Zs"),
+        whitelist_characters="ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖØÙÚÛÜÝÞßàáâãäåæçèéêëìíîïðñòóôõöøùúûüýþÿ",
+    ),
+    min_size=2,
+    max_size=40,
+).map(str.strip).filter(
+    lambda s: (
+        s
+        and len(s) >= 2
+        and "," not in s
+        and " e " not in s
+        and s.strip().lower() != "e"
+        and ":" not in s
+        and "\n" not in s
+    )
+)
+
+
+def _build_formato2_text(nomes: list[str]) -> str:
+    """Monta um texto no Formato 2 a partir de uma lista de nomes de bairros."""
+    if len(nomes) == 1:
+        lista = nomes[0]
+    else:
+        # Junta com ", " e usa " e " antes do último item
+        lista = ", ".join(nomes[:-1]) + " e " + nomes[-1]
+    return f"BAIRROS AFETADOS\n{lista}\n"
+
+
+def _build_formato1_text(cidades_bairros: list[tuple[str, list[str]]]) -> str:
+    """Monta um texto no Formato 1 a partir de pares (cidade, [bairros])."""
+    lines = ["BAIRROS AFETADOS"]
+    for cidade, bairros in cidades_bairros:
+        linha = f"{cidade}: {', '.join(bairros)}"
+        lines.append(linha)
+    return "\n".join(lines) + "\n"
+
+
+# Feature: bairros-afetados-extraction-fix, Property 1: Formato 2 extrai todos os bairros da lista plana
+class TestPropertyFormato2ExtraiTodos:
+
+    @given(st.lists(_bairro_name, min_size=1, max_size=10))
+    @settings(max_examples=100)
+    def test_property_formato2_extrai_todos(self, nomes):
+        # Validates: Requirements 2.2, 2.3
+        # Deduplicate while preserving order to match function behaviour
+        seen = set()
+        nomes_unicos = []
+        for n in nomes:
+            title = n.title()
+            if title not in seen:
+                seen.add(title)
+                nomes_unicos.append(n)
+        assume(len(nomes_unicos) >= 1)
+
+        texto = _build_formato2_text(nomes_unicos)
+        resultado = extrair_bairros_do_texto(texto)
+
+        for nome in nomes_unicos:
+            assert nome.title() in resultado, (
+                f"Bairro '{nome.title()}' não encontrado em {resultado!r}\n"
+                f"Texto: {texto!r}"
+            )
+
+
+# Feature: bairros-afetados-extraction-fix, Property 2: Invariante de saída
+class TestPropertyInvarianteSaida:
+
+    @given(st.lists(_bairro_name, min_size=1, max_size=10))
+    @settings(max_examples=100)
+    def test_property_invariante_saida_formato2(self, nomes):
+        # Validates: Requirements 2.5, 3.5
+        texto = _build_formato2_text(nomes)
+        resultado = extrair_bairros_do_texto(texto)
+
+        for elem in resultado:
+            assert elem == elem.strip(), f"Elemento com espaços extras: {elem!r}"
+            assert elem != "", "Elemento vazio encontrado"
+
+        assert len(resultado) == len(set(resultado)), (
+            f"Duplicatas encontradas: {resultado}"
+        )
+
+    @given(st.lists(_bairro_name, min_size=1, max_size=10))
+    @settings(max_examples=100)
+    def test_property_invariante_saida_formato1(self, nomes):
+        # Validates: Requirements 2.5, 3.5
+        # Build a simple Formato 1 text with one city
+        cidade = "Contagem"
+        texto = _build_formato1_text([(cidade, nomes)])
+        resultado = extrair_bairros_do_texto(texto)
+
+        for elem in resultado:
+            assert elem == elem.strip(), f"Elemento com espaços extras: {elem!r}"
+            assert elem != "", "Elemento vazio encontrado"
+
+        assert len(resultado) == len(set(resultado)), (
+            f"Duplicatas encontradas: {resultado}"
+        )
+
+
+# Feature: bairros-afetados-extraction-fix, Property 3: Regressão Formato 1
+class TestPropertyRegressaoFormato1:
+
+    @given(st.lists(_bairro_name, min_size=1, max_size=10))
+    @settings(max_examples=100)
+    def test_property_regressao_formato1(self, nomes):
+        # Validates: Requirements 3.1, 3.2, 3.4
+        cidade = "Belo Horizonte"
+        # Use "Cidade: Cidade: bairros" pattern (duplicated prefix as seen in real data)
+        linha = f"{cidade}: {cidade}: {', '.join(nomes)}"
+        texto = f"BAIRROS AFETADOS\n{linha}\n"
+        resultado = extrair_bairros_do_texto(texto)
+
+        # All bairros should appear in the result
+        for nome in nomes:
+            assert nome.title() in resultado, (
+                f"Bairro '{nome.title()}' não encontrado em {resultado!r}\n"
+                f"Texto: {texto!r}"
+            )
+
+        # City name should NOT appear as a bairro
+        assert cidade not in resultado, (
+            f"Nome da cidade '{cidade}' não deve aparecer como bairro: {resultado!r}"
+        )
+        assert cidade.upper() not in [b.upper() for b in resultado], (
+            f"Nome da cidade '{cidade}' (qualquer case) não deve aparecer como bairro: {resultado!r}"
+        )
+
+
+# Feature: bairros-afetados-extraction-fix, Property 4: Sem cabeçalho → lista vazia
+class TestPropertySemCabecalhoRetornaVazio:
+
+    @given(st.text())
+    @settings(max_examples=100)
+    def test_property_sem_cabecalho_retorna_vazio(self, texto):
+        # Validates: Requirements 3.3
+        assume("BAIRROS AFETADOS" not in texto.upper())
+        resultado = extrair_bairros_do_texto(texto)
+        assert resultado == [], (
+            f"Esperado [] para texto sem cabeçalho, obtido {resultado!r}"
+        )
