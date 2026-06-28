@@ -437,13 +437,16 @@ def exibir_alerta_texto(interrupcao: Interrupcao) -> None:
 
 
 def exibir_resultado(interrupcoes: list[Interrupcao], modo_json: bool, output: Optional[Path] = None) -> None:
-    payload = [i.to_dict() for i in interrupcoes]
+    payload = {
+        "gerado_em": datetime.now().isoformat(),
+        "total_alertas": len(interrupcoes),
+        "alertas": [i.to_dict() for i in interrupcoes],
+    }
 
     if output:
-        # Grava sempre como JSON, independente de --json estar ativo
         conteudo = json.dumps(payload, ensure_ascii=False, indent=2)
         output.write_text(conteudo, encoding="utf-8")
-        log.info("Resultado salvo em %s (%d alerta(s)).", output, len(payload))
+        log.info("Resultado salvo em %s (%d alerta(s)).", output, len(interrupcoes))
 
     if modo_json:
         print(json.dumps(payload, ensure_ascii=False, indent=2))

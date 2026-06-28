@@ -89,17 +89,21 @@ python scraper.py --json 2>/dev/null   # só o JSON
 Exemplo de saída:
 
 ```json
-[
-  {
-    "titulo": "28/06 - BELO HORIZONTE - Situação do Abastecimento",
-    "url": "https://www.copasa.com.br/...",
-    "cidades": ["Belo Horizonte", "Contagem"],
-    "inicio": "2026-06-28T06:00:00",
-    "fim": "2026-06-30T07:00:00",
-    "esta_ativa": true,
-    "bairros_afetados": ["Nazare", "Sao Gabriel", "Vista do Sol"]
-  }
-]
+{
+  "gerado_em": "2026-06-28T10:20:42",
+  "total_alertas": 1,
+  "alertas": [
+    {
+      "titulo": "28/06 - BELO HORIZONTE - Situação do Abastecimento",
+      "url": "https://www.copasa.com.br/...",
+      "cidades": ["Belo Horizonte", "Contagem"],
+      "inicio": "2026-06-28T06:00:00",
+      "fim": "2026-06-30T07:00:00",
+      "esta_ativa": true,
+      "bairros_afetados": ["Nazare", "Sao Gabriel", "Vista do Sol"]
+    }
+  ]
+}
 ```
 
 ### URL direta
