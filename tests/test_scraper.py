@@ -14,6 +14,7 @@ import pytest
 from scraper import (
     extrair_datas,
     extrair_cidades,
+    extrair_bairros_do_texto,
     cruzar_bairros,
     dentro_da_janela,
     processar_noticia,
@@ -325,14 +326,16 @@ class TestProcessarNoticia:
         assert resultado is None
 
     def test_modo_cidade_inteira_aceita_alerta_sem_bairros(self):
-        """bairros=[] deve aceitar qualquer alerta da cidade configurada."""
+        """bairros=[] deve aceitar qualquer alerta e extrair bairros do texto."""
         resultado = processar_noticia(
             url=self.URL, titulo=self.TITULO,
             texto=TEXTO_NOTICIA,
             bairros=[], aliases={},
         )
         assert resultado is not None
-        assert resultado.bairros_afetados == []
+        # TEXTO_NOTICIA tem "Bairros afetados: Nazare, Sao Gabriel, Vista do Sol"
+        # extrair_bairros_do_texto deve capturá-los
+        assert set(resultado.bairros_afetados) == {"Nazare", "Sao Gabriel", "Vista Do Sol"}
 
     def test_modo_cidade_inteira_aceita_texto_sem_bairro_conhecido(self):
         """Mesmo um texto sem bairros monitorados deve gerar alerta no modo cidade inteira."""
@@ -358,3 +361,75 @@ class TestProcessarNoticia:
         )
         # resultado não-None → exit code 1 no orquestrador
         assert resultado is not None
+
+
+# ===========================================================================
+# extrair_bairros_do_texto
+# ===========================================================================
+
+TEXTO_COM_BAIRROS_AFETADOS = (
+    "A Copasa informa que o abastecimento será interrompido.\n"
+    "do dia 01/07/2026 (06:00:00) até o dia 02/07/2026 (12:00:00)\n"
+    "\n"
+    "BAIRROS AFETADOS\n"
+    "Belo Horizonte: Belo Horizonte: Aarão Reis, Acaiaca, Vista Do Sol\n"
+    "Contagem: Contagem: Cidade Industrial, Riacho Das Pedras\n"
+)
+
+TEXTO_COM_BAIRROS_SEM_DUPLICATA_CIDADE = (
+    "Interrupção programada.\n"
+    "do dia 05/07/2026 (08:00:00) até o dia 06/07/2026 (10:00:00)\n"
+    "\n"
+    "BAIRROS AFETADOS\n"
+    "Nova Lima: Bairro Alpha, Bairro Beta, Bairro Alpha\n"
+)
+
+
+class TestExtrairBairrosDoTexto:
+
+    def test_retorna_vazio_sem_secao_bairros(self):
+        assert extrair_bairros_do_texto("Texto sem seção de bairros.") == []
+
+    def test_extrai_bairros_de_multiplas_cidades(self):
+        resultado = extrair_bairros_do_texto(TEXTO_COM_BAIRROS_AFETADOS)
+        assert "Aarão Reis" in resultado
+        assert "Acaiaca" in resultado
+        assert "Vista Do Sol" in resultado
+        assert "Cidade Industrial" in resultado
+        assert "Riacho Das Pedras" in resultado
+
+    def test_remove_prefixo_duplicado_da_cidade(self):
+        """Formato "Cidade: Cidade: bairro1, ..." não deve gerar "Cidade" como bairro."""
+        resultado = extrair_bairros_do_texto(TEXTO_COM_BAIRROS_AFETADOS)
+        assert "Belo Horizonte" not in resultado
+        assert "Contagem" not in resultado
+
+    def test_sem_duplicatas_quando_bairro_repetido(self):
+        resultado = extrair_bairros_do_texto(TEXTO_COM_BAIRROS_SEM_DUPLICATA_CIDADE)
+        assert resultado.count("Bairro Alpha") == 1
+
+    def test_titulo_case_aplicado(self):
+        texto = (
+            "BAIRROS AFETADOS\n"
+            "Sabará: Sabará: centro velho, NOVA ESPERANÇA\n"
+        )
+        resultado = extrair_bairros_do_texto(texto)
+        assert "Centro Velho" in resultado
+        assert "Nova Esperança" in resultado
+
+    def test_retorna_lista_vazia_para_secao_vazia(self):
+        texto = "BAIRROS AFETADOS\n"
+        assert extrair_bairros_do_texto(texto) == []
+
+    def test_processar_noticia_cidade_inteira_popula_bairros_afetados(self):
+        """processar_noticia com bairros=[] deve chamar extrair_bairros_do_texto."""
+        resultado = processar_noticia(
+            url="https://copasa.com.br/teste",
+            titulo="01/07 - BELO HORIZONTE - Situação do Abastecimento",
+            texto=TEXTO_COM_BAIRROS_AFETADOS,
+            bairros=[],
+            aliases={},
+        )
+        assert resultado is not None
+        assert "Aarão Reis" in resultado.bairros_afetados
+        assert "Cidade Industrial" in resultado.bairros_afetados

@@ -116,6 +116,14 @@ CITIES_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+# Seção "BAIRROS AFETADOS" no corpo do artigo.
+# Formato: "NomeCidade: bairro1, bairro2, ..." (uma linha por cidade)
+BAIRROS_AFETADOS_HEADER = re.compile(r"BAIRROS\s+AFETADOS", re.IGNORECASE)
+BAIRROS_CIDADE_PATTERN = re.compile(
+    r"^([A-ZÁÉÍÓÚÀÂÊÔÃÕÇ][^:]{2,40}):\s*(.+)$",
+    re.MULTILINE,
+)
+
 
 # ---------------------------------------------------------------------------
 # Modelos de dados
@@ -397,10 +405,54 @@ def cruzar_bairros(texto: str, bairros: list[str], aliases: dict[str, str]) -> l
     return encontrados
 
 
+def extrair_bairros_do_texto(texto: str) -> list[str]:
+    """
+    Extrai todos os bairros listados na seção "BAIRROS AFETADOS" do artigo.
+
+    O portal Copasa estrutura a seção assim:
+        BAIRROS AFETADOS
+        Belo Horizonte: Aarão Reis, Acaiaca, Aeroporto, ...
+        Contagem: Cidade Industrial, Industrial 1ª e 2ª Seção, ...
+
+    Captura apenas as linhas após o cabeçalho, até o fim da seção.
+    Retorna lista plana de nomes com Title Case, sem duplicatas.
+    """
+    if not BAIRROS_AFETADOS_HEADER.search(texto):
+        return []
+
+    # Isola o trecho a partir do cabeçalho
+    pos = BAIRROS_AFETADOS_HEADER.search(texto).start()
+    trecho = texto[pos:]
+
+    bairros: list[str] = []
+    vistos: set[str] = set()
+
+    for match in BAIRROS_CIDADE_PATTERN.finditer(trecho):
+        # group(1) = nome da cidade, group(2) = lista de bairros separados por vírgula
+        lista_raw = match.group(2)
+        for b in lista_raw.split(","):
+            nome = b.strip().strip(".")
+            if not nome:
+                continue
+            # O portal duplica o nome da cidade no início da lista:
+            # "Belo Horizonte: Belo Horizonte: Aarão Reis, ..."
+            # Remove tudo até o último ":" do token, se houver
+            if ":" in nome:
+                nome = nome.split(":")[-1].strip().strip(".")
+            if not nome:
+                continue
+            nome_title = nome.title()
+            if nome_title not in vistos:
+                vistos.add(nome_title)
+                bairros.append(nome_title)
+
+    return bairros
+
+
 def processar_noticia(url: str, titulo: str, texto: str, bairros: list[str], aliases: dict) -> Optional[Interrupcao]:
     if not bairros:
-        # Modo cidade inteira — aceita qualquer alerta sem filtrar por bairro
-        bairros_afetados = []
+        # Modo cidade inteira — extrai bairros mencionados pela Copasa no artigo
+        bairros_afetados = extrair_bairros_do_texto(texto)
     else:
         bairros_afetados = cruzar_bairros(texto, bairros, aliases)
         if not bairros_afetados:
