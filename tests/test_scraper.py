@@ -14,19 +14,23 @@ import pytest
 from hypothesis import given, settings, assume
 from hypothesis import strategies as st
 
-from scraper import (
+from scraper.parser import (
     extrair_datas,
     extrair_cidades,
     extrair_bairros_do_texto,
     cruzar_bairros,
-    dentro_da_janela,
     processar_noticia,
+)
+from scraper.utils import dentro_da_janela
+from scraper.cache import (
     cache_carregar,
     cache_ja_processado,
     cache_registrar,
     cache_salvar,
     _url_hash,
 )
+from scraper.monitor import _filtrar_encerrados
+from scraper.models import Interrupcao
 
 
 # ---------------------------------------------------------------------------
@@ -234,7 +238,7 @@ class TestDentroDaJanela:
         # Amanhã ainda dentro (delta = +1, janela = 14)
         assert dentro_da_janela(self._titulo(1)) is True
 
-    @patch("scraper.datetime")
+    @patch("scraper.utils.datetime")
     def test_virada_de_ano(self, mock_dt):
         """Data 31/12 com hoje = 05/01 deve recuar um ano e ser reconhecida."""
         mock_dt.now.return_value = datetime(2027, 1, 5)
@@ -285,18 +289,18 @@ class TestCache:
         assert "processado_em" in entrada
 
     def test_carregar_retorna_dict_vazio_sem_arquivo(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("scraper.CACHE_FILE", tmp_path / "inexistente.json")
+        monkeypatch.setattr("scraper.cache.CACHE_FILE", tmp_path / "inexistente.json")
         assert cache_carregar() == {}
 
     def test_carregar_retorna_dict_vazio_com_json_corrompido(self, tmp_path, monkeypatch):
         f = tmp_path / ".cache.json"
         f.write_text("{ INVALIDO }", encoding="utf-8")
-        monkeypatch.setattr("scraper.CACHE_FILE", f)
+        monkeypatch.setattr("scraper.cache.CACHE_FILE", f)
         assert cache_carregar() == {}
 
     def test_salvar_e_carregar_roundtrip(self, tmp_path, monkeypatch):
         f = tmp_path / ".cache.json"
-        monkeypatch.setattr("scraper.CACHE_FILE", f)
+        monkeypatch.setattr("scraper.cache.CACHE_FILE", f)
         cache_original = {"abc": {"url": "https://x.com", "teve_alerta": False, "processado_em": "2026-06-28T10:00:00"}}
         cache_salvar(cache_original)
         assert cache_carregar() == cache_original
@@ -617,6 +621,59 @@ class TestPropertyRegressaoFormato1:
         assert cidade.upper() not in [b.upper() for b in resultado], (
             f"Nome da cidade '{cidade}' (qualquer case) não deve aparecer como bairro: {resultado!r}"
         )
+
+
+# ===========================================================================
+# _filtrar_encerrados
+# ===========================================================================
+
+def _make_interrupcao(inicio: datetime, fim: datetime) -> Interrupcao:
+    return Interrupcao(
+        titulo="Teste",
+        url="http://example.com",
+        cidades=["Belo Horizonte"],
+        inicio=inicio,
+        fim=fim,
+        bairros_afetados=["Nazare"],
+        texto_bruto="",
+    )
+
+
+class TestFiltrarEncerrados:
+
+    def test_ativo_sempre_passa(self):
+        agora = datetime.now()
+        it = _make_interrupcao(agora - timedelta(hours=1), agora + timedelta(hours=2))
+        assert _filtrar_encerrados([it]) == [it]
+
+    def test_encerrado_hoje_passa(self):
+        agora = datetime.now()
+        it = _make_interrupcao(agora - timedelta(hours=4), agora - timedelta(minutes=30))
+        assert _filtrar_encerrados([it]) == [it]
+
+    def test_encerrado_ontem_passa(self):
+        agora = datetime.now()
+        fim_ontem = agora.replace(hour=10, minute=0) - timedelta(days=1)
+        it = _make_interrupcao(fim_ontem - timedelta(hours=2), fim_ontem)
+        assert _filtrar_encerrados([it]) == [it]
+
+    def test_encerrado_anteontem_removido(self):
+        agora = datetime.now()
+        fim = agora - timedelta(days=2)
+        it = _make_interrupcao(fim - timedelta(hours=2), fim)
+        assert _filtrar_encerrados([it]) == []
+
+    def test_sem_data_fim_sempre_passa(self):
+        agora = datetime.now()
+        it = _make_interrupcao(agora - timedelta(hours=1), agora + timedelta(hours=1))
+        it.fim = None
+        assert _filtrar_encerrados([it]) == [it]
+
+    def test_mistura_ativos_e_antigos(self):
+        agora = datetime.now()
+        ativo = _make_interrupcao(agora - timedelta(hours=1), agora + timedelta(hours=2))
+        antigo = _make_interrupcao(agora - timedelta(days=5), agora - timedelta(days=2))
+        assert _filtrar_encerrados([ativo, antigo]) == [ativo]
 
 
 # Feature: bairros-afetados-extraction-fix, Property 4: Sem cabeçalho → lista vazia
