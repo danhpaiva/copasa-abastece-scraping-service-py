@@ -2,7 +2,7 @@
 
 ![Python](https://img.shields.io/badge/Python-3.10%2B-blue?logo=python&logoColor=white)
 ![Playwright](https://img.shields.io/badge/Playwright-1.49-green?logo=playwright&logoColor=white)
-![pytest](https://img.shields.io/badge/pytest-37%20testes-brightgreen?logo=pytest&logoColor=white)
+![pytest](https://img.shields.io/badge/pytest-42%20testes-brightgreen?logo=pytest&logoColor=white)
 ![License](https://img.shields.io/github/license/danhpaiva/copasa-abastece-scraping-service-py)
 ![Branch](https://img.shields.io/badge/branch-develop-orange)
 
@@ -63,9 +63,11 @@ Edite o arquivo `bairros.json` para definir o que monitorar:
 
 | Campo | Descrição |
 |---|---|
-| `bairros` | Lista de bairros a monitorar (sem acento — normalização é automática) |
+| `bairros` | Lista de bairros a monitorar (sem acento — normalização é automática). **Lista vazia** ativa o modo cidade inteira: qualquer alerta das cidades configuradas é aceito, sem filtro por bairro |
 | `aliases` | Variações com acento ou grafia alternativa mapeadas ao nome canônico |
 | `cidades_alvo` | Pré-filtro por cidade na listagem — reduz navegações desnecessárias |
+
+> **Modo cidade inteira:** configure `"bairros": []` para receber todos os alertas de uma cidade, sem destacar bairros específicos. Útil para monitorar municípios menores onde a Copasa não detalha bairros no texto.
 
 ---
 
@@ -171,7 +173,7 @@ copasa-abastece-scraping-service-py/
 ├── bairros.json        # configuração de bairros, aliases e cidades-alvo
 ├── requirements.txt    # dependências Python
 ├── tests/
-│   └── test_scraper.py # testes unitários (37 casos, sem Playwright)
+│   └── test_scraper.py # testes unitários (42 casos, sem Playwright)
 └── .cache.json         # cache de execução (gerado em runtime, ignorado pelo git)
 ```
 
@@ -194,3 +196,4 @@ Cobertura:
 | `cruzar_bairros` | match exato, alias com acento, case-insensitive, sem duplicatas, correspondência parcial |
 | `dentro_da_janela` | hoje, limite exato, além do limite, janela customizada, fail-open, virada de ano |
 | `cache` | hash determinístico, artigo sem alerta, artigo com alerta, roundtrip salvar/carregar, JSON corrompido |
+| `processar_noticia` | modo bairro com match, modo bairro sem match, modo cidade inteira com e sem bairros conhecidos |
