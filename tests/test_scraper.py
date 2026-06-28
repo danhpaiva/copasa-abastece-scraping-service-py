@@ -16,6 +16,7 @@ from scraper import (
     extrair_cidades,
     cruzar_bairros,
     dentro_da_janela,
+    processar_noticia,
     cache_carregar,
     cache_ja_processado,
     cache_registrar,
@@ -295,3 +296,65 @@ class TestCache:
         cache_original = {"abc": {"url": "https://x.com", "teve_alerta": False, "processado_em": "2026-06-28T10:00:00"}}
         cache_salvar(cache_original)
         assert cache_carregar() == cache_original
+
+
+# ===========================================================================
+# processar_noticia — modo cidade inteira (bairros vazio)
+# ===========================================================================
+
+class TestProcessarNoticia:
+
+    URL  = "https://copasa.com.br/noticia/teste"
+    TITULO = "28/06 - BELO HORIZONTE - Situação do Abastecimento"
+
+    def test_modo_bairro_retorna_interrupcao_com_match(self):
+        resultado = processar_noticia(
+            url=self.URL, titulo=self.TITULO,
+            texto=TEXTO_NOTICIA,
+            bairros=BAIRROS, aliases=ALIASES,
+        )
+        assert resultado is not None
+        assert set(resultado.bairros_afetados) == {"Nazare", "Sao Gabriel", "Vista do Sol"}
+
+    def test_modo_bairro_retorna_none_sem_match(self):
+        resultado = processar_noticia(
+            url=self.URL, titulo=self.TITULO,
+            texto="Interrupção em CONTAGEM. Sem bairros monitorados.",
+            bairros=BAIRROS, aliases=ALIASES,
+        )
+        assert resultado is None
+
+    def test_modo_cidade_inteira_aceita_alerta_sem_bairros(self):
+        """bairros=[] deve aceitar qualquer alerta da cidade configurada."""
+        resultado = processar_noticia(
+            url=self.URL, titulo=self.TITULO,
+            texto=TEXTO_NOTICIA,
+            bairros=[], aliases={},
+        )
+        assert resultado is not None
+        assert resultado.bairros_afetados == []
+
+    def test_modo_cidade_inteira_aceita_texto_sem_bairro_conhecido(self):
+        """Mesmo um texto sem bairros monitorados deve gerar alerta no modo cidade inteira."""
+        texto = (
+            "nas Cidades de BELO HORIZONTE o abastecimento poderá apresentar "
+            "intermitência, do dia 01/07/2026 (08:00:00) até o dia 02/07/2026 (18:00:00)"
+        )
+        resultado = processar_noticia(
+            url=self.URL, titulo=self.TITULO,
+            texto=texto,
+            bairros=[], aliases={},
+        )
+        assert resultado is not None
+        assert resultado.bairros_afetados == []
+        assert resultado.inicio == datetime(2026, 7, 1, 8, 0, 0)
+
+    def test_modo_cidade_inteira_preserva_exit_code_1(self):
+        """Exit code 1 é determinado pela presença de alertas, não de bairros."""
+        resultado = processar_noticia(
+            url=self.URL, titulo=self.TITULO,
+            texto=TEXTO_NOTICIA,
+            bairros=[], aliases={},
+        )
+        # resultado não-None → exit code 1 no orquestrador
+        assert resultado is not None
