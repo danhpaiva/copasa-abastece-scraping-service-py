@@ -398,9 +398,13 @@ def cruzar_bairros(texto: str, bairros: list[str], aliases: dict[str, str]) -> l
 
 
 def processar_noticia(url: str, titulo: str, texto: str, bairros: list[str], aliases: dict) -> Optional[Interrupcao]:
-    bairros_afetados = cruzar_bairros(texto, bairros, aliases)
-    if not bairros_afetados:
-        return None
+    if not bairros:
+        # Modo cidade inteira — aceita qualquer alerta sem filtrar por bairro
+        bairros_afetados = []
+    else:
+        bairros_afetados = cruzar_bairros(texto, bairros, aliases)
+        if not bairros_afetados:
+            return None
     inicio, fim = extrair_datas(texto)
     cidades = extrair_cidades(texto)
     return Interrupcao(
