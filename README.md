@@ -2,7 +2,7 @@
 
 ![Python](https://img.shields.io/badge/Python-3.10%2B-blue?logo=python&logoColor=white)
 ![Playwright](https://img.shields.io/badge/Playwright-1.49-green?logo=playwright&logoColor=white)
-![pytest](https://img.shields.io/badge/pytest-42%20testes-brightgreen?logo=pytest&logoColor=white)
+![pytest](https://img.shields.io/badge/pytest-49%20testes-brightgreen?logo=pytest&logoColor=white)
 ![License](https://img.shields.io/github/license/danhpaiva/copasa-abastece-scraping-service-py)
 ![Branch](https://img.shields.io/badge/branch-develop-orange)
 
@@ -196,4 +196,5 @@ Cobertura:
 | `cruzar_bairros` | match exato, alias com acento, case-insensitive, sem duplicatas, correspondência parcial |
 | `dentro_da_janela` | hoje, limite exato, além do limite, janela customizada, fail-open, virada de ano |
 | `cache` | hash determinístico, artigo sem alerta, artigo com alerta, roundtrip salvar/carregar, JSON corrompido |
-| `processar_noticia` | modo bairro com match, modo bairro sem match, modo cidade inteira com e sem bairros conhecidos |
+| `extrair_bairros_do_texto` | sem seção BAIRROS AFETADOS, múltiplas cidades, remoção de prefixo duplicado, deduplicação, title case, seção vazia |
+| `processar_noticia` | modo bairro com match, modo bairro sem match, modo cidade inteira com e sem bairros conhecidos, popula bairros_afetados |
