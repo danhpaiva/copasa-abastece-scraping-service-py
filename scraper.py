@@ -71,9 +71,11 @@ DATE_PATTERN = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 
-# Captura a cidade mencionada na notícia (ex.: "Cidades de BELO HORIZONTE , CONTAGEM")
+# Captura todas as cidades da lista separada por vírgulas/espaços após "Cidades de" ou "Municípios de".
+# O lookahead termina em "o abastecimento" ou ponto/fim-de-linha — não em vírgula,
+# pois a própria lista usa vírgulas como separador.
 CITIES_PATTERN = re.compile(
-    r"(?:cidade[s]?\s+de|munic[ií]pio[s]?\s+de)\s+([A-ZÁÉÍÓÚÀÂÊÔÃÕÇ ,]+?)(?=[,.]|$|\n|\r|o\s+abastecimento)",
+    r"(?:cidade[s]?\s+de|munic[ií]pio[s]?\s+de)\s+([A-ZÁÉÍÓÚÀÂÊÔÃÕÇ\s,e]+?)(?=\.|$|\r|\n|o\s+abastecimento)",
     re.IGNORECASE,
 )
 
@@ -110,11 +112,11 @@ def normalizar(texto: str) -> str:
     return sem_acento.lower().strip()
 
 
-def carregar_bairros() -> tuple[list[str], dict[str, str]]:
-    """Carrega a lista de bairros e aliases do arquivo JSON."""
+def carregar_bairros() -> tuple[list[str], dict[str, str], list[str]]:
+    """Carrega bairros, aliases e cidades-alvo do arquivo JSON."""
     with open(BAIRROS_FILE, encoding="utf-8") as f:
         dados = json.load(f)
-    return dados["bairros"], dados.get("aliases", {})
+    return dados["bairros"], dados.get("aliases", {}), dados.get("cidades_alvo", [])
 
 
 def parse_datetime(data_str: str, hora_str: str) -> Optional[datetime]:
@@ -183,25 +185,54 @@ def navegar_com_retry(page: Page, url: str, tentativas: int = 3) -> bool:
 
 def extrair_links_noticias(page: Page) -> list[dict]:
     """
-    Extrai links e títulos das notícias da página de listagem.
-    O portal IBM WCM usa estrutura de links dentro de .ibm-columns ou similares.
+    Extrai notícias da página de listagem do portal IBM WCM da Copasa.
+
+    O portal renderiza cada notícia com DOIS links consecutivos com o mesmo href
+    (formato ?1dmy&urile=wcm%3apath%3a%2F.../<UUID>):
+      - 1º link: título  ("28/06 - BELO HORIZONTE - Situação do Abastecimento")
+      - 2º link: resumo  ("A Copasa informa que, devido a...")
+
+    Como o texto completo já está disponível na listagem, não é necessário
+    navegar para cada artigo individualmente.
     """
-    links = []
+    BASE = "https://www.copasa.com.br/wps/portal/internet/imprensa/noticias/informacoes-sobre-abastecimento"
+    UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.I)
+
+    noticias: dict[str, dict] = {}  # uuid → {titulo, resumo, url}
+
     try:
-        # Aguarda ao menos um link de notícia aparecer
-        page.wait_for_selector("a[href*='abast']", timeout=10_000)
-        elementos = page.query_selector_all("a[href*='abast']")
+        elementos = page.query_selector_all("a[href*='urile']")
         for el in elementos:
             href = el.get_attribute("href") or ""
-            titulo = el.inner_text().strip()
-            if href and titulo and len(titulo) > 10:
-                # Resolve URL relativa
-                if href.startswith("/"):
-                    href = "https://www.copasa.com.br" + href
-                links.append({"url": href, "titulo": titulo})
+            texto = el.inner_text().strip()
+            if not texto:
+                continue
+
+            uuid_match = UUID_RE.search(href)
+            if not uuid_match:
+                continue
+            uuid = uuid_match.group(0)
+
+            url_absoluta = f"{BASE}/{href}" if href.startswith("?") else href
+
+            if uuid not in noticias:
+                noticias[uuid] = {"titulo": texto, "resumo": "", "url": url_absoluta}
+            else:
+                # Segundo link = resumo; concatena ao título para formar o texto completo
+                noticias[uuid]["resumo"] = texto
+
     except Exception as exc:
-        print(f"  [WARN] Não foi possível extrair links: {exc}")
-    return links
+        print(f"  [WARN] Erro ao extrair links: {exc}")
+
+    # Monta lista com texto combinado (título + resumo)
+    resultado = []
+    for item in noticias.values():
+        resultado.append({
+            "url": item["url"],
+            "titulo": item["titulo"],
+            "texto": f"{item['titulo']}\n{item['resumo']}",
+        })
+    return resultado
 
 
 def extrair_texto_noticia(page: Page) -> str:
@@ -249,8 +280,9 @@ def extrair_cidades(texto: str) -> list[str]:
     if not match:
         return []
     cidades_raw = match.group(1)
-    # Divide por vírgula e normaliza espaços
-    return [c.strip().title() for c in cidades_raw.split(",") if c.strip()]
+    # Remove conjunção "e" isolada, divide por vírgula, normaliza espaços
+    partes = re.split(r",|\be\b", cidades_raw, flags=re.IGNORECASE)
+    return [c.strip().title() for c in partes if c.strip()]
 
 
 def cruzar_bairros(texto: str, bairros: list[str], aliases: dict[str, str]) -> list[str]:
@@ -340,59 +372,92 @@ def exibir_sem_ocorrencias(bairros: list[str]) -> None:
 # ---------------------------------------------------------------------------
 
 def monitorar() -> None:
-    bairros, aliases = carregar_bairros()
-    print(f"[INFO] Bairros monitorados: {', '.join(bairros)}")
-    print(f"[INFO] Acessando: {BASE_URL}")
+    bairros, aliases, cidades_alvo = carregar_bairros()
+    print(f"[INFO] Bairros monitorados : {', '.join(bairros)}")
+    print(f"[INFO] Cidades-alvo        : {', '.join(cidades_alvo) or '(todas)'}")
+    print(f"[INFO] Acessando           : {BASE_URL}")
     print()
 
     interrupcoes: list[Interrupcao] = []
+    cidades_norm = [normalizar(c) for c in cidades_alvo]
 
     with sync_playwright() as playwright:
         browser, context = criar_contexto(playwright)
         try:
             page = context.new_page()
 
-            # 1. Navega para a listagem de notícias
+            # 1. Carrega a listagem de notícias
             sucesso = navegar_com_retry(page, BASE_URL)
             if not sucesso:
                 print("[ERRO] Não foi possível acessar o portal da Copasa.")
                 return
 
-            links = extrair_links_noticias(page)
-            print(f"[INFO] {len(links)} notícia(s) encontrada(s) na listagem.")
+            noticias = extrair_links_noticias(page)
+            print(f"[INFO] {len(noticias)} notícia(s) encontrada(s) na listagem.")
 
-            # 2. Para cada notícia, abre e processa
-            for item in links[:10]:  # Limita às 10 mais recentes
-                print(f"  [>>] {item['titulo'][:60]}...")
+            # 2. Primeiro passo: filtra pelo resumo da listagem por cidade-alvo.
+            #    O resumo não contém bairros — apenas se a cidade está no texto.
+            #    Artigos sem cidade-alvo são descartados sem custo de navegação.
+            candidatos = []
+            for item in noticias:
+                texto_norm = normalizar(item["texto"])
+                cidade_ok = not cidades_norm or any(c in texto_norm for c in cidades_norm)
+                if cidade_ok:
+                    candidatos.append(item)
+
+            total = len(candidatos)
+            print(f"[INFO] {total} artigo(s) com cidade-alvo para inspeção detalhada.")
+            print()
+
+            # 3. Segundo passo: navega para cada candidato e verifica bairros no texto completo
+            for i, item in enumerate(candidatos, 1):
+                print(f"  [{i}/{total}] {item['titulo'][:65]}...")
                 try:
                     sucesso = navegar_com_retry(page, item["url"])
                     if not sucesso:
                         continue
 
-                    texto = extrair_texto_noticia(page)
+                    texto_completo = extrair_texto_noticia(page)
                     resultado = processar_noticia(
                         url=item["url"],
                         titulo=item["titulo"],
-                        texto=texto,
+                        texto=texto_completo,
                         bairros=bairros,
                         aliases=aliases,
                     )
                     if resultado:
                         interrupcoes.append(resultado)
-                        print(f"      [MATCH] Bairros afetados: {resultado.bairros_afetados}")
+                        print(f"        [MATCH] Bairros afetados: {resultado.bairros_afetados}")
+                    else:
+                        print(f"        [SKIP] Nenhum bairro monitorado encontrado.")
 
                 except Exception as exc:
-                    print(f"  [WARN] Erro ao processar notícia: {exc}")
+                    print(f"  [WARN] Erro ao processar artigo: {exc}")
 
         finally:
             context.close()
             browser.close()
 
-    # 3. Exibe alertas
+    # 4. Deduplica: mesmo (inicio, fim) = mesma interrupção republicada no portal
+    unicos: dict[tuple, Interrupcao] = {}
+    for it in interrupcoes:
+        chave = (it.inicio, it.fim, frozenset(it.cidades))
+        if chave not in unicos:
+            unicos[chave] = it
+        else:
+            # Mantém o título mais longo (mais completo)
+            if len(it.titulo) > len(unicos[chave].titulo):
+                unicos[chave] = it
+
+    duplicatas = len(interrupcoes) - len(unicos)
+    if duplicatas:
+        print(f"[INFO] {duplicatas} publicação(ões) duplicada(s) ignorada(s).")
+
+    # 5. Exibe alertas
     print()
-    if interrupcoes:
-        print(f"[RESULTADO] {len(interrupcoes)} alerta(s) encontrado(s):\n")
-        for interrupcao in interrupcoes:
+    if unicos:
+        print(f"[RESULTADO] {len(unicos)} alerta(s) único(s) encontrado(s):\n")
+        for interrupcao in unicos.values():
             exibir_alerta(interrupcao)
     else:
         exibir_sem_ocorrencias(bairros)
@@ -407,7 +472,7 @@ def monitorar_url_direta(url: str) -> None:
     Processa uma URL específica de notícia diretamente,
     sem percorrer a listagem. Útil para alertas já identificados.
     """
-    bairros, aliases = carregar_bairros()
+    bairros, aliases, _ = carregar_bairros()
     print(f"[INFO] Processando URL direta...")
     print(f"[INFO] Bairros monitorados: {', '.join(bairros)}")
     print()

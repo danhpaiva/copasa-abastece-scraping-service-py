@@ -10,5 +10,8 @@
     "NAZARE": "Nazare",
     "SAO GABRIEL": "Sao Gabriel",
     "VISTA DO SOL": "Vista do Sol"
-  }
+  },
+  "cidades_alvo": [
+    "Belo Horizonte"
+  ]
 }
