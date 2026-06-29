@@ -1,7 +1,9 @@
 import json
 import unicodedata
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from typing import Optional
+
+BRT = timezone(timedelta(hours=-3))
 
 from .config import BAIRROS_FILE, TITLE_DATE_PATTERN
 
@@ -22,7 +24,8 @@ def parse_datetime(data_str: str, hora_str: str) -> Optional[datetime]:
     if hora_str.count(":") == 1:
         hora_str += ":00"
     try:
-        return datetime.strptime(f"{data_str} {hora_str}", "%d/%m/%Y %H:%M:%S")
+        naive = datetime.strptime(f"{data_str} {hora_str}", "%d/%m/%Y %H:%M:%S")
+        return naive.replace(tzinfo=BRT)
     except ValueError:
         return None
 
@@ -32,7 +35,7 @@ def dentro_da_janela(titulo: str, janela_dias: int = 14) -> bool:
     if not match:
         return True
 
-    hoje = datetime.now().date()
+    hoje = datetime.now(BRT).date()
     try:
         data = datetime.strptime(f"{match.group(1)}/{hoje.year}", "%d/%m/%Y").date()
         if (data - hoje).days > 30:

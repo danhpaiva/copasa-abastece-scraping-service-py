@@ -1,6 +1,6 @@
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -33,7 +33,7 @@ def exibir_alerta_texto(interrupcao: Interrupcao) -> None:
 
 def exibir_resultado(interrupcoes: list[Interrupcao], modo_json: bool, output: Optional[Path] = None) -> None:
     payload = {
-        "gerado_em": datetime.now().isoformat(),
+        "gerado_em": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S"),
         "total_alertas": len(interrupcoes),
         "alertas": [i.to_dict() for i in interrupcoes],
     }

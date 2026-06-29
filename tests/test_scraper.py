@@ -10,6 +10,8 @@ import logging
 from datetime import datetime, date, timedelta
 from unittest.mock import patch
 
+from scraper.utils import BRT
+
 import pytest
 from hypothesis import given, settings, assume
 from hypothesis import strategies as st
@@ -64,16 +66,16 @@ class TestExtrairDatas:
 
     def test_extrai_inicio_e_fim_com_segundos(self):
         inicio, fim = extrair_datas(TEXTO_NOTICIA)
-        assert inicio == datetime(2026, 6, 28, 6, 0, 0)
-        assert fim    == datetime(2026, 6, 30, 7, 0, 0)
+        assert inicio == datetime(2026, 6, 28, 6, 0, 0, tzinfo=BRT)
+        assert fim    == datetime(2026, 6, 30, 7, 0, 0, tzinfo=BRT)
 
     def test_extrai_hora_sem_segundos(self):
         texto = (
             "do dia 10/07/2026 (08:00) até o dia 11/07/2026 (18:30)"
         )
         inicio, fim = extrair_datas(texto)
-        assert inicio == datetime(2026, 7, 10, 8, 0, 0)
-        assert fim    == datetime(2026, 7, 11, 18, 30, 0)
+        assert inicio == datetime(2026, 7, 10, 8, 0, 0, tzinfo=BRT)
+        assert fim    == datetime(2026, 7, 11, 18, 30, 0, tzinfo=BRT)
 
     def test_retorna_none_none_sem_padrao(self):
         inicio, fim = extrair_datas("Texto sem nenhuma data.")
@@ -357,7 +359,7 @@ class TestProcessarNoticia:
         )
         assert resultado is not None
         assert resultado.bairros_afetados == []
-        assert resultado.inicio == datetime(2026, 7, 1, 8, 0, 0)
+        assert resultado.inicio == datetime(2026, 7, 1, 8, 0, 0, tzinfo=BRT)
 
     def test_modo_cidade_inteira_preserva_exit_code_1(self):
         """Exit code 1 é determinado pela presença de alertas, não de bairros."""
@@ -642,35 +644,35 @@ def _make_interrupcao(inicio: datetime, fim: datetime) -> Interrupcao:
 class TestFiltrarEncerrados:
 
     def test_ativo_sempre_passa(self):
-        agora = datetime.now()
+        agora = datetime.now(BRT)
         it = _make_interrupcao(agora - timedelta(hours=1), agora + timedelta(hours=2))
         assert _filtrar_encerrados([it]) == [it]
 
     def test_encerrado_hoje_passa(self):
-        agora = datetime.now()
+        agora = datetime.now(BRT)
         it = _make_interrupcao(agora - timedelta(hours=4), agora - timedelta(minutes=30))
         assert _filtrar_encerrados([it]) == [it]
 
     def test_encerrado_ontem_passa(self):
-        agora = datetime.now()
+        agora = datetime.now(BRT)
         fim_ontem = agora.replace(hour=10, minute=0) - timedelta(days=1)
         it = _make_interrupcao(fim_ontem - timedelta(hours=2), fim_ontem)
         assert _filtrar_encerrados([it]) == [it]
 
     def test_encerrado_anteontem_removido(self):
-        agora = datetime.now()
+        agora = datetime.now(BRT)
         fim = agora - timedelta(days=2)
         it = _make_interrupcao(fim - timedelta(hours=2), fim)
         assert _filtrar_encerrados([it]) == []
 
     def test_sem_data_fim_sempre_passa(self):
-        agora = datetime.now()
+        agora = datetime.now(BRT)
         it = _make_interrupcao(agora - timedelta(hours=1), agora + timedelta(hours=1))
         it.fim = None
         assert _filtrar_encerrados([it]) == [it]
 
     def test_mistura_ativos_e_antigos(self):
-        agora = datetime.now()
+        agora = datetime.now(BRT)
         ativo = _make_interrupcao(agora - timedelta(hours=1), agora + timedelta(hours=2))
         antigo = _make_interrupcao(agora - timedelta(days=5), agora - timedelta(days=2))
         assert _filtrar_encerrados([ativo, antigo]) == [ativo]

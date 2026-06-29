@@ -2,6 +2,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
 
+from .utils import BRT
+
 
 @dataclass
 class Interrupcao:
@@ -14,14 +16,14 @@ class Interrupcao:
     texto_bruto: str = field(repr=False)
 
     def esta_ativa(self) -> bool:
-        agora = datetime.now()
+        agora = datetime.now(BRT)
         if self.inicio and self.fim:
             return self.inicio <= agora <= self.fim
         return False
 
     def esta_encerrada(self) -> bool:
         if self.fim:
-            return datetime.now() > self.fim
+            return datetime.now(BRT) > self.fim
         return False
 
     def to_dict(self) -> dict:
