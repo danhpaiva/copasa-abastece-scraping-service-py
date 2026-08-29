@@ -1,7 +1,7 @@
 # copasa-abastece-scraping-service-py
 
 ![Python](https://img.shields.io/badge/Python-3.10%2B-blue?logo=python&logoColor=white)
-![Playwright](https://img.shields.io/badge/Playwright-1.49-green?logo=playwright&logoColor=white)
+![Requests](https://img.shields.io/badge/Requests-2.32-green?logo=python&logoColor=white)
 ![pytest](https://img.shields.io/badge/pytest-64%20testes-brightgreen?logo=pytest&logoColor=white)
 ![License](https://img.shields.io/github/license/danhpaiva/copasa-abastece-scraping-service-py)
 ![Branch](https://img.shields.io/badge/branch-develop-orange)
@@ -32,12 +32,12 @@ O resumo de cada notícia já está disponível na listagem do portal IBM WCM, e
 ## Requisitos
 
 - Python 3.10+
-- Chromium (instalado automaticamente pelo Playwright)
 
 ```bash
 pip install -r requirements.txt
-playwright install chromium
 ```
+
+O portal da Copasa é renderizado no servidor (IBM WebSphere Portal), então a coleta usa `requests` + `BeautifulSoup` — sem necessidade de browser headless. Isso também evita bloqueios de WAF que costumam mirar o fingerprint TLS de browsers automatizados.
 
 ---
 
@@ -193,7 +193,7 @@ copasa-abastece-scraping-service-py/
 │   ├── utils.py            # normalizar, carregar_bairros, parse_datetime, dentro_da_janela
 │   ├── cache.py            # cache de execução por hash SHA-1
 │   ├── timeout.py          # context manager de timeout global
-│   ├── browser.py          # Playwright: contexto, navegação, extração de links/texto
+│   ├── browser.py          # requests/BeautifulSoup: sessão, navegação, extração de links/texto
 │   ├── parser.py           # extração de datas, cidades, bairros, processar_noticia
 │   ├── output.py           # formatação e exibição de resultados
 │   ├── monitor.py          # orquestrador: monitorar, monitorar_url_direta
@@ -201,7 +201,7 @@ copasa-abastece-scraping-service-py/
 ├── bairros.json            # configuração de bairros, aliases e cidades-alvo
 ├── requirements.txt        # dependências Python
 ├── tests/
-│   └── test_scraper.py     # testes unitários (64 casos, sem Playwright)
+│   └── test_scraper.py     # testes unitários (64 casos, sem rede)
 └── .cache.json             # cache de execução (gerado em runtime, ignorado pelo git)
 ```
 
@@ -209,7 +209,7 @@ copasa-abastece-scraping-service-py/
 
 ## Testes
 
-Os testes cobrem as funções puras do scraper e não dependem de Playwright ou rede. Executam em menos de 1 segundo.
+Os testes cobrem as funções puras do scraper e não dependem de rede. Executam em menos de 1 segundo.
 
 ```bash
 pytest tests/ -v
