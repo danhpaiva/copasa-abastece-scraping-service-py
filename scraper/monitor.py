@@ -3,9 +3,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
-from playwright.sync_api import sync_playwright
-
-from .browser import criar_contexto, extrair_links_noticias, extrair_texto_noticia, navegar_com_retry
+from .browser import criar_sessao, extrair_links_noticias, extrair_texto_noticia, navegar_com_retry
 from .cache import cache_carregar, cache_ja_processado, cache_registrar, cache_salvar
 from .config import BASE_URL, TIMEOUT_GLOBAL_S
 from .models import Interrupcao
@@ -66,66 +64,64 @@ def monitorar(modo_json: bool = False, janela_dias: int = 14, timeout_s: int = T
 
     try:
         with timeout_global(timeout_s):
-            with sync_playwright() as playwright:
-                browser, context = criar_contexto(playwright)
-                try:
-                    page = context.new_page()
+            sessao = criar_sessao()
+            try:
+                soup = navegar_com_retry(sessao, BASE_URL)
+                if soup is None:
+                    log.error("Não foi possível acessar o portal da Copasa.")
+                    return 2
 
-                    if not navegar_com_retry(page, BASE_URL):
-                        log.error("Não foi possível acessar o portal da Copasa.")
-                        return 2
+                noticias = extrair_links_noticias(soup)
+                log.info("%d notícia(s) encontrada(s) na listagem.", len(noticias))
 
-                    noticias = extrair_links_noticias(page)
-                    log.info("%d notícia(s) encontrada(s) na listagem.", len(noticias))
+                candidatos = []
+                ignorados_data = 0
+                for item in noticias:
+                    if not dentro_da_janela(item["titulo"], janela_dias):
+                        ignorados_data += 1
+                        continue
+                    texto_norm = normalizar(item["texto"])
+                    if not cidades_norm or any(c in texto_norm for c in cidades_norm):
+                        candidatos.append(item)
 
-                    candidatos = []
-                    ignorados_data = 0
-                    for item in noticias:
-                        if not dentro_da_janela(item["titulo"], janela_dias):
-                            ignorados_data += 1
+                if ignorados_data:
+                    log.info("%d notícia(s) fora da janela de %d dias ignorada(s).", ignorados_data, janela_dias)
+                log.info("%d artigo(s) com cidade-alvo para inspeção detalhada.", len(candidatos))
+
+                for i, item in enumerate(candidatos, 1):
+                    if cache_ja_processado(cache, item["url"]):
+                        cache_hits += 1
+                        log.debug("[%d/%d] CACHE HIT — %s", i, len(candidatos), item["titulo"][:60])
+                        continue
+
+                    log.info("[%d/%d] %s...", i, len(candidatos), item["titulo"][:65])
+                    resultado = None
+                    try:
+                        artigo_soup = navegar_com_retry(sessao, item["url"])
+                        if artigo_soup is None:
                             continue
-                        texto_norm = normalizar(item["texto"])
-                        if not cidades_norm or any(c in texto_norm for c in cidades_norm):
-                            candidatos.append(item)
+                        texto_completo = extrair_texto_noticia(artigo_soup)
+                        resultado = processar_noticia(
+                            url=item["url"], titulo=item["titulo"],
+                            texto=texto_completo, bairros=bairros, aliases=aliases,
+                        )
+                        if resultado:
+                            interrupcoes.append(resultado)
+                            log.info("  MATCH → bairros: %s", resultado.bairros_afetados)
+                        else:
+                            log.debug("  SKIP — nenhum bairro monitorado encontrado.")
+                    except Exception as exc:
+                        log.warning("Erro ao processar artigo: %s", exc)
+                        continue
 
-                    if ignorados_data:
-                        log.info("%d notícia(s) fora da janela de %d dias ignorada(s).", ignorados_data, janela_dias)
-                    log.info("%d artigo(s) com cidade-alvo para inspeção detalhada.", len(candidatos))
+                    cache_registrar(cache, item["url"], resultado.to_dict() if resultado else None)
 
-                    for i, item in enumerate(candidatos, 1):
-                        if cache_ja_processado(cache, item["url"]):
-                            cache_hits += 1
-                            log.debug("[%d/%d] CACHE HIT — %s", i, len(candidatos), item["titulo"][:60])
-                            continue
+                cache_salvar(cache)
+                if cache_hits:
+                    log.info("%d artigo(s) ignorado(s) por cache.", cache_hits)
 
-                        log.info("[%d/%d] %s...", i, len(candidatos), item["titulo"][:65])
-                        resultado = None
-                        try:
-                            if not navegar_com_retry(page, item["url"]):
-                                continue
-                            texto_completo = extrair_texto_noticia(page)
-                            resultado = processar_noticia(
-                                url=item["url"], titulo=item["titulo"],
-                                texto=texto_completo, bairros=bairros, aliases=aliases,
-                            )
-                            if resultado:
-                                interrupcoes.append(resultado)
-                                log.info("  MATCH → bairros: %s", resultado.bairros_afetados)
-                            else:
-                                log.debug("  SKIP — nenhum bairro monitorado encontrado.")
-                        except Exception as exc:
-                            log.warning("Erro ao processar artigo: %s", exc)
-                            continue
-
-                        cache_registrar(cache, item["url"], resultado.to_dict() if resultado else None)
-
-                    cache_salvar(cache)
-                    if cache_hits:
-                        log.info("%d artigo(s) ignorado(s) por cache.", cache_hits)
-
-                finally:
-                    context.close()
-                    browser.close()
+            finally:
+                sessao.close()
 
     except TimeoutError:
         log.error("Timeout global de %ds atingido. Encerrando.", timeout_s)
@@ -151,36 +147,34 @@ def monitorar_url_direta(url: str, modo_json: bool = False, output: Optional[Pat
     log.info("URL: %s", url)
 
     try:
-        with sync_playwright() as playwright:
-            browser, context = criar_contexto(playwright)
-            try:
-                page = context.new_page()
-                if not navegar_com_retry(page, url):
-                    log.error("Não foi possível acessar a notícia.")
-                    return 2
+        sessao = criar_sessao()
+        try:
+            soup = navegar_com_retry(sessao, url)
+            if soup is None:
+                log.error("Não foi possível acessar a notícia.")
+                return 2
 
-                titulo = page.title() or "Notícia Copasa"
-                texto = extrair_texto_noticia(page)
-                resultado = processar_noticia(
-                    url=url, titulo=titulo, texto=texto,
-                    bairros=bairros, aliases=aliases,
-                )
+            titulo = soup.title.get_text(strip=True) if soup.title else "Notícia Copasa"
+            texto = extrair_texto_noticia(soup)
+            resultado = processar_noticia(
+                url=url, titulo=titulo, texto=texto,
+                bairros=bairros, aliases=aliases,
+            )
 
-                if resultado:
-                    exibir_resultado([resultado], modo_json, output)
-                    return 1
-                else:
-                    log.info("Nenhum bairro monitorado encontrado nesta notícia.")
-                    inicio, fim = extrair_datas(texto)
-                    cidades = extrair_cidades(texto)
-                    log.info("Cidades mencionadas : %s", ", ".join(cidades) or "nenhuma")
-                    log.info("Período identificado: %s → %s", formatar_datetime(inicio), formatar_datetime(fim))
-                    exibir_resultado([], modo_json, output)
-                    return 0
+            if resultado:
+                exibir_resultado([resultado], modo_json, output)
+                return 1
+            else:
+                log.info("Nenhum bairro monitorado encontrado nesta notícia.")
+                inicio, fim = extrair_datas(texto)
+                cidades = extrair_cidades(texto)
+                log.info("Cidades mencionadas : %s", ", ".join(cidades) or "nenhuma")
+                log.info("Período identificado: %s → %s", formatar_datetime(inicio), formatar_datetime(fim))
+                exibir_resultado([], modo_json, output)
+                return 0
 
-            finally:
-                context.close()
-                browser.close()
+        finally:
+            sessao.close()
 
     except Exception as exc:
         log.error("Erro inesperado: %s", exc)
