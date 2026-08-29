@@ -30,7 +30,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--timeout", type=int, default=TIMEOUT_GLOBAL_S, metavar="SEG",
                         help=f"Timeout global da sessão em segundos (padrão: {TIMEOUT_GLOBAL_S})")
     parser.add_argument("--output", type=Path, default=None, metavar="ARQUIVO",
-                        help="Grava o resultado em JSON no arquivo informado (ex: alerts.json)")
+                        help="Grava o resultado em JSON no arquivo informado e também em .txt com o mesmo nome (ex: alerts.json e alerts.txt)")
     parser.add_argument("--debug", action="store_true",
                         help="Habilita logs de nível DEBUG")
     return parser

@@ -13,22 +13,44 @@ def formatar_datetime(dt: Optional[datetime]) -> str:
     return dt.strftime("%d/%m/%Y às %H:%M") if dt else "não identificado"
 
 
-def exibir_alerta_texto(interrupcao: Interrupcao) -> None:
+def formatar_alerta_texto(interrupcao: Interrupcao) -> str:
     sep = "=" * 70
     status = "ATIVA AGORA" if interrupcao.esta_ativa() else "PROGRAMADA / ENCERRADA"
-    print(sep)
-    print(f"  ALERTA DE INTERRUPÇÃO — {status}")
-    print(sep)
-    print(f"  Título   : {interrupcao.titulo}")
-    print(f"  URL      : {interrupcao.url}")
-    print()
-    print(f"  Início   : {formatar_datetime(interrupcao.inicio)}")
-    print(f"  Término  : {formatar_datetime(interrupcao.fim)}")
-    print()
-    print(f"  Cidades  : {', '.join(interrupcao.cidades) or 'não identificadas'}")
-    print(f"  Bairros monitorados afetados: {', '.join(interrupcao.bairros_afetados)}")
-    print(sep)
-    print()
+    linhas = [
+        sep,
+        f"  ALERTA DE INTERRUPÇÃO — {status}",
+        sep,
+        f"  Título   : {interrupcao.titulo}",
+        f"  URL      : {interrupcao.url}",
+        "",
+        f"  Início   : {formatar_datetime(interrupcao.inicio)}",
+        f"  Término  : {formatar_datetime(interrupcao.fim)}",
+        "",
+        f"  Cidades  : {', '.join(interrupcao.cidades) or 'não identificadas'}",
+        f"  Bairros monitorados afetados: {', '.join(interrupcao.bairros_afetados)}",
+        sep,
+        "",
+    ]
+    return "\n".join(linhas)
+
+
+def exibir_alerta_texto(interrupcao: Interrupcao) -> None:
+    print(formatar_alerta_texto(interrupcao))
+
+
+def formatar_resultado_texto(interrupcoes: list[Interrupcao]) -> str:
+    if not interrupcoes:
+        sep = "=" * 70
+        return "\n".join([
+            sep,
+            "  Nenhuma interrupção encontrada para os bairros monitorados.",
+            sep,
+            "",
+        ])
+
+    linhas = [f"[RESULTADO] {len(interrupcoes)} alerta(s) único(s) encontrado(s):", ""]
+    linhas.extend(formatar_alerta_texto(it) for it in interrupcoes)
+    return "\n".join(linhas)
 
 
 def exibir_resultado(interrupcoes: list[Interrupcao], modo_json: bool, output: Optional[Path] = None) -> None:
@@ -41,7 +63,12 @@ def exibir_resultado(interrupcoes: list[Interrupcao], modo_json: bool, output: O
     if output:
         conteudo = json.dumps(payload, ensure_ascii=False, indent=2)
         output.write_text(conteudo, encoding="utf-8")
-        log.info("Resultado salvo em %s (%d alerta(s)).", output, len(interrupcoes))
+        output_txt = output.with_suffix(".txt")
+        output_txt.write_text(formatar_resultado_texto(interrupcoes), encoding="utf-8")
+        log.info(
+            "Resultado salvo em %s e %s (%d alerta(s)).",
+            output, output_txt, len(interrupcoes),
+        )
 
     if modo_json:
         print(json.dumps(payload, ensure_ascii=False, indent=2))
